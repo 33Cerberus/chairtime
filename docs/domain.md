@@ -102,7 +102,7 @@ whole day or a range of hours within it, and it is one of two types:
 - **Additional** — the barber works outside their usual hours.
 
 A blocking exception cannot be created for a period that already has bookings.
-The barber must deal with those bookings first.
+An administrator must move or cancel those bookings first.
 
 ### 4.4 Booking rules
 
