@@ -14,7 +14,9 @@ price for the same service. Besides haircuts, the shop sells retail products
 - One location, not a chain.
 - Not a marketplace — clients arrive via a direct URL, there is no search across shops.
 - Single language, single currency.
-- An account is required to book; there is no guest booking.
+- Every booking and order belongs to a client record. Clients create an account
+  themselves; an administrator can create a client record by phone or at the
+  reception. There is no anonymous booking.
 
 ## 2. Users
 
@@ -25,18 +27,19 @@ Can also buy products from the catalog.
 **Barber** — sees their own schedule as a calendar. Manages their own working
 hours and time off. Advances the status of their bookings through the visit.
 
-**Administrator** — creates bookings taken by phone or at the reception desk.
-Manages barbers, services, prices, product catalog and stock, and handles
-product orders. Can cancel or move any booking.
+**Administrator** — creates bookings and orders taken by phone or at the
+reception desk. For clients without an account, creates a client record with
+a name and phone number only. Manages barbers, services, prices, product
+catalog and stock, and handles product orders. Can cancel or move any booking.
 
-**Owner** — inherits all Administrator permissions, plus access to the
-statistics section.
+**Owner** — inherits all Administrator permissions, and additionally creates
+staff accounts, assigns roles, and has access to the statistics section.
 
 ## 3. Client path
 
 | Step | Description | What happens in the system |
 |------|-------------|----------------------------|
-| 1 | Registers, providing name, surname, and email or phone number | A user record is created |
+| 1 | Registers with name, surname, and phone number; email is optional | A user record is created, or linked to an existing client record with the same phone number |
 | 2 | Picks a single service from the catalog | The catalog is read from the database |
 | 3 | Picks a barber and one of their available slots | Available slots are calculated from the barber's schedule, exceptions, and existing bookings |
 | 4 | Confirms the booking, optionally paying online | A booking is created with status `BOOKED` and payment status `PAID` or `UNPAID` |
@@ -133,6 +136,8 @@ before it is marked `RECEIVED`.
 
 Canceling an order restores the stock quantity, and triggers a refund if the
 order was already paid.
+
+An administrator can also place an order on behalf of a client, for example by phone or at the reception.
 
 **Order status:** `CREATED`, `IN_PROGRESS`, `READY`, `RECEIVED` (terminal), `CANCELED` (terminal)
 
