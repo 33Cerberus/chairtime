@@ -132,6 +132,8 @@ The shop sells products from a catalog, each with a stock quantity. The client
 adds products to a cart and places an order, which is collected at the shop.
 There is no delivery.
 
+Each product can have several photos; the first one is shown in the catalog.
+
 When an order is placed, its status becomes `CREATED` and the stock quantity is
 decreased. An administrator then prepares the order (`IN_PROGRESS`) and marks it
 `READY` when done. Once handed over to the client, the order becomes `RECEIVED`.
