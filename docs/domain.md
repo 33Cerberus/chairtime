@@ -94,6 +94,10 @@ A barber has a recurring weekly schedule — for example, Monday to Friday from
 10:00 to 19:00 with a lunch break, and weekends off. The lunch break is part of
 the weekly schedule, not a separate exception.
 
+The weekly schedule is stored as working intervals — for example, Monday
+10:00–14:00 and Monday 15:00–19:00. The lunch break is simply the gap between
+two intervals, not a separate record or exception.
+
 Barbers see their own working hours and bookings as a calendar.
 
 ### 4.3 Exceptions
@@ -150,6 +154,6 @@ An administrator can also place an order on behalf of a client, for example by p
 | Service | A haircut, a beard trim, a combo, and so on | `Service` |
 | Booking | A reserved slot with a specific barber | `Booking` |
 | Slot | A time interval available for booking | calculated |
-| Schedule | A barber's recurring weekly working hours | `Schedule` |
+| Working interval | One continuous working time range of a barber on a given weekday; together they form the weekly schedule | `WorkingInterval` |
 | Exception | A one-time override of the weekly schedule | `ScheduleException` |
 | No-show | The client did not arrive | `NO_SHOW` status |
