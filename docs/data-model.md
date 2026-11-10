@@ -25,6 +25,10 @@ erDiagram
 
     Booking ||--o{ Payment : "paid by"
     Order ||--o{ Payment : "paid by"
+
+    User ||--o{ RefreshToken : "signed in with"
+    User ||--o{ OneTimeToken : "issued"
+    User ||--o{ Notification : "receives"
 ```
 
 ## 2. Entities
@@ -55,6 +59,7 @@ Public part of a barber, shown to clients.
 | userId | uuid | ✓ | → User; unique |
 | photoUrl | string | ✗ | Link to the file in S3 |
 | bio | text | ✗ | |
+| title | string | ✗ | One public line under the name |
 
 ### Service
 
@@ -102,6 +107,7 @@ A one-time override of the weekly schedule on a specific date.
 | type | enum | ✓ | `BLOCKING`, `ADDITIONAL` |
 | startTime | time | ✗ | Local shop time; empty together with `endTime` = whole day |
 | endTime | time | ✗ | Local shop time |
+| reason | string | ✗ | Private note for staff |
 
 ### Booking
 
@@ -118,7 +124,10 @@ A client's appointment with a barber for one service.
 | paymentStatus | enum | ✓ | `UNPAID`, `PAID`, `REFUNDING`, `REFUNDED`; default `UNPAID` |
 | priceSnapshot | integer | ✓ | Grosze; barber's price at booking time |
 | durationSnapshot | integer | ✓ | Minutes; service duration at booking time |
-| reminderSentAt | timestamp | ✗ | Empty until the reminder is sent |
+| reminderSentAt | timestamp | ✗ | Empty until the reminder is sent; cleared when the booking is moved |
+| note | string | ✗ | From the client or the reception |
+| canceledAt | timestamp | ✗ | |
+| cancelReason | string | ✗ | |
 
 ### Payment
 
@@ -130,8 +139,11 @@ Payments made in cash at the shop create no record here.
 | bookingId | uuid | ✗ | → Booking |
 | orderId | uuid | ✗ | → Order |
 | amount | integer | ✓ | Grosze |
-| stripePaymentIntentId | string | ✓ | Unique |
+| stripePaymentIntentId | string | ✓ | Unique. A generated `mock_pi_…` id under the mock provider |
 | status | enum | ✓ | `PENDING`, `SUCCEEDED`, `FAILED`, `REFUNDED`; default `PENDING` |
+| provider | string | ✓ | `stripe` or `mock` |
+| stripeRefundId | string | ✗ | |
+| failureReason | string | ✗ | |
 
 ### Product
 
@@ -145,6 +157,7 @@ Retail product in the shop catalog.
 | stock | integer | ✓ | ≥ 0 |
 | photoUrls | string[] | ✓ | Default `[]`; the first one is shown in the catalog |
 | isActive | boolean | ✓ | Default `true` |
+| category | string | ✗ | Free-form grouping, shown as a filter in the shop |
 
 ### Cart
 
@@ -172,6 +185,8 @@ Unique: `(cartId, productId)`.
 | status | enum | ✓ | `CREATED`, `IN_PROGRESS`, `READY`, `RECEIVED`, `CANCELED`; default `CREATED` |
 | paymentStatus | enum | ✓ | `UNPAID`, `PAID`, `REFUNDING`, `REFUNDED`; default `UNPAID` |
 | totalPrice | integer | ✓ | Grosze; snapshot, sum of items at order time |
+| pickupCode | string | ✓ | Unique; short random code shown at the desk |
+| canceledAt | timestamp | ✗ | |
 
 ### OrderItem
 
@@ -182,6 +197,48 @@ Unique: `(cartId, productId)`.
 | quantity | integer | ✓ | ≥ 1 |
 | priceSnapshot | integer | ✓ | Grosze; price of one unit at order time |
 
+### RefreshToken
+
+One refresh token of a signed-in device. See `api.md` §2.1.
+
+| Field | Type | Required | Notes |
+|-------|------|:--------:|-------|
+| userId | uuid | ✓ | → User |
+| tokenHash | string | ✓ | Unique; SHA-256 of the token. The token itself is never stored |
+| familyId | uuid | ✓ | Shared by every token produced by rotating one login |
+| expiresAt | timestamp | ✓ | |
+| revokedAt | timestamp | ✗ | Set on rotation, logout or theft detection |
+| userAgent | string | ✗ | |
+
+### OneTimeToken
+
+A single-use secret: a password link or a 6-digit code.
+
+| Field | Type | Required | Notes |
+|-------|------|:--------:|-------|
+| userId | uuid | ✓ | → User |
+| purpose | enum | ✓ | `SET_PASSWORD`, `PHONE_CLAIM`, `PASSWORD_RESET` |
+| tokenHash | string | ✓ | SHA-256; the secret is never stored |
+| expiresAt | timestamp | ✓ | 72 hours for links, 10 minutes for codes |
+| usedAt | timestamp | ✗ | |
+| attempts | integer | ✓ | Wrong guesses; a code dies after 5 |
+
+### Notification
+
+Log of messages sent to a user: confirmations, reminders, order updates. One-time codes are never stored here.
+
+| Field | Type | Required | Notes |
+|-------|------|:--------:|-------|
+| userId | uuid | ✓ | → User |
+| bookingId | uuid | ✗ | → Booking |
+| type | string | ✓ | e.g. `BOOKING_REMINDER` |
+| channel | string | ✓ | |
+| body | text | ✓ | |
+
+### WebhookEvent
+
+Stripe events already applied, keyed by the Stripe event id, so a redelivered event is ignored.
+
 ## 3. Lifecycles
 
 ### Booking status
@@ -189,7 +246,7 @@ Unique: `(cartId, productId)`.
 ```mermaid
 stateDiagram-v2
     [*] --> BOOKED
-    BOOKED --> IN_PROGRESS : barber / admin
+    BOOKED --> IN_PROGRESS : barber / admin, from 30 min before
     BOOKED --> CANCELED : client (≥ 2h before) / admin
     BOOKED --> NO_SHOW : barber / admin, after 15 min
     IN_PROGRESS --> COMPLETED : barber / admin
@@ -204,8 +261,11 @@ stateDiagram-v2
 stateDiagram-v2
     [*] --> UNPAID
     UNPAID --> PAID : online payment succeeded / admin marks cash payment
-    PAID --> REFUNDING : canceled within the allowed window
+    PAID --> UNPAID : admin corrects a cash payment
+    PAID --> REFUNDING : online payment refunded (cancel within the window, or admin)
     REFUNDING --> REFUNDED : refund confirmed by Stripe
+    REFUNDING --> PAID : refund failed
+    PAID --> REFUNDED : admin hands back a cash payment
     REFUNDED --> [*]
 ```
 
@@ -216,7 +276,7 @@ stateDiagram-v2
     [*] --> CREATED
     CREATED --> IN_PROGRESS : admin
     IN_PROGRESS --> READY : admin
-    READY --> RECEIVED : admin
+    READY --> RECEIVED : admin, once paid
     CREATED --> CANCELED : client / admin
     IN_PROGRESS --> CANCELED : client / admin
     READY --> CANCELED : client / admin
@@ -274,11 +334,14 @@ a cash payment at the shop is recorded by an administrator setting `paymentStatu
 | Product stock is never negative | Database (check) |
 | A payment references exactly one of booking or order | Database (check) |
 | Quantities are ≥ 1; prices and amounts are ≥ 0 | Database (check) |
-| A barber profile exists only for users with role `BARBER` | Code |
-| Working interval `startTime < endTime`; intervals of one barber on one day do not overlap | Code |
-| Exception times are both empty or both set, with `startTime < endTime` | Code |
-| An `ADDITIONAL` exception always has times | Code |
-| Service duration is a multiple of 15 minutes | Code |
-| A booking lies inside the barber's available hours, not in the past, at most 30 days ahead | Code |
+| Service and booking durations are positive multiples of 15 minutes | Database (check) |
+| Working interval and exception times: start before end; exception times both set or both empty; an `ADDITIONAL` exception has times | Database (check) |
+| Order pickup code is unique; refresh token hash is unique | Database (unique) |
+| A barber profile is created only for users with role `BARBER`. It is kept, but no longer listed, if the role later changes — bookings reference it | Code |
+| Intervals of one barber on one day do not overlap; all schedule times lie on a 15-minute step | Code |
+| A schedule change never leaves an upcoming booking outside the barber's hours | Code |
+| A client never holds two overlapping bookings | Code |
+| An order becomes `RECEIVED` only once it is paid | Code |
+| A booking's service time lies inside the barber's available hours (the buffer may run past them), not in the past, at most 30 days ahead | Code |
 | Status transitions follow the lifecycles above; terminal statuses never change | Code |
 | Order `totalPrice` equals the sum of its items at creation | Code |

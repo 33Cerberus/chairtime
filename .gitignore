@@ -141,3 +141,7 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Chairtime
+# Locally stored uploads and generated demo artwork
+apps/api/uploads/

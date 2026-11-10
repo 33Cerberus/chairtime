@@ -1,0 +1,205 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
+
+  /* Warm near-blacks and paper tones. */
+  --color-ink-950: #0e0c0a;
+  --color-ink-900: #171411;
+  --color-ink-800: #221e1a;
+  --color-ink-700: #302a25;
+  --color-ink-600: #4b443d;
+  --color-ink-500: #6e655c;
+  --color-ink-400: #958b80;
+  --color-ink-300: #bdb4a8;
+  --color-ink-200: #dcd5ca;
+  --color-ink-100: #ebe5db;
+  --color-ink-50: #f4efe7;
+  --color-paper: #f7f3ec;
+  --color-card: #fffdf9;
+
+  /* Brass: the single accent. */
+  --color-brass-50: #faf5ea;
+  --color-brass-100: #f2e6cc;
+  --color-brass-200: #e4cd9c;
+  --color-brass-300: #d3b170;
+  --color-brass-400: #c19749;
+  --color-brass-500: #a98034;
+  --color-brass-600: #8a6629;
+  --color-brass-700: #6b4e22;
+
+  --color-ok-50: #edf5ef;
+  --color-ok-600: #2f7350;
+  --color-warn-50: #fbf3e1;
+  --color-warn-600: #a36a12;
+  --color-bad-50: #faecea;
+  --color-bad-600: #b0412f;
+  --color-info-50: #eaf1f6;
+  --color-info-600: #33648c;
+
+  --shadow-soft: 0 1px 2px rgb(23 20 17 / 0.04), 0 10px 28px -12px rgb(23 20 17 / 0.14);
+  --shadow-lift: 0 2px 6px rgb(23 20 17 / 0.06), 0 28px 56px -20px rgb(23 20 17 / 0.28);
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --animate-rise: rise 0.7s var(--ease-out-expo) both;
+  --animate-fade: fade 0.4s ease both;
+  --animate-pole: pole 1.2s linear infinite;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes pole {
+  to {
+    background-position: 0 28px;
+  }
+}
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-paper text-ink-900 font-sans;
+    font-feature-settings: 'ss01', 'cv11';
+  }
+  ::selection {
+    background: var(--color-brass-200);
+    color: var(--color-ink-950);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-brass-500);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  button,
+  [role='button'],
+  a,
+  summary,
+  label[for] {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  /* Numbers in tables and prices line up. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  .display {
+    font-family: var(--font-display);
+    font-weight: 400;
+    letter-spacing: -0.015em;
+    line-height: 0.98;
+  }
+  .eyebrow {
+    @apply text-[11px] font-medium uppercase tracking-[0.22em] text-ink-500;
+  }
+  /* The barber pole, used as a quiet signature: loaders, dividers, the logo. */
+  .pole {
+    background-image: repeating-linear-gradient(
+      -38deg,
+      var(--color-brass-400) 0 7px,
+      var(--color-card) 7px 14px,
+      var(--color-ink-900) 14px 21px,
+      var(--color-card) 21px 28px
+    );
+    background-size: 100% 28px;
+  }
+  .grain::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.22;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='.55'/></svg>");
+  }
+  .skeleton {
+    background: linear-gradient(90deg, var(--color-ink-100) 25%, var(--color-ink-50) 37%, var(--color-ink-100) 63%);
+    background-size: 200% 100%;
+    animation: var(--animate-shimmer);
+    border-radius: 10px;
+  }
+  .hairline {
+    border-color: rgb(23 20 17 / 0.09);
+  }
+}
+
+/* Native <dialog> drives every modal and drawer: focus trapping and Esc come for free. */
+dialog {
+  color: inherit;
+}
+dialog::backdrop {
+  background: rgb(14 12 10 / 0.52);
+  backdrop-filter: blur(3px);
+  animation: fade 0.25s ease both;
+}
+dialog[open].modal {
+  animation: modal-in 0.35s var(--ease-out-expo) both;
+}
+dialog[open].sheet {
+  animation: sheet-in 0.4s var(--ease-out-expo) both;
+}
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+}
+@keyframes sheet-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Lock page scroll while a modal dialog is open. */
+html:has(dialog[open]) {
+  overflow: hidden;
+}
