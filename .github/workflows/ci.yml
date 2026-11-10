@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: chairtime
+          POSTGRES_PASSWORD: chairtime
+          POSTGRES_DB: chairtime
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U chairtime -d chairtime"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://chairtime:chairtime@localhost:5433/chairtime?schema=public
+      JWT_ACCESS_SECRET: ci-only-secret-ci-only-secret-ci-only-secret
+      WEB_ORIGIN: http://localhost:5173
+      PORT: 4000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run generate -w apps/api
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Apply migrations
+        run: npm run db:migrate
+
+      - name: Seed demo data
+        run: npm run db:seed
+
+      - name: End-to-end smoke test
+        run: |
+          npm run start -w apps/api &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:4000/api/v1/health > /dev/null && break
+            sleep 1
+          done
+          npm run smoke -w apps/api

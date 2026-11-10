@@ -45,15 +45,30 @@ Booking and history on React Native, against the same API.
 
 Analytics: revenue by period, barber utilisation.
 
+## Status
+
+| Milestone | State |
+|-----------|-------|
+| 0 — Skeleton | Done |
+| 1 — First vertical slice | Done, except deployment to a public URL |
+| 2 — Booking (MVP) | Done |
+| 3 — Store and payments | Done. Stripe is wired but only the mock provider has been exercised |
+| 4 — Mobile client | Not started. The API accepts cookie-less clients |
+| Later — Analytics | Done (owner section) |
+
+Open questions from earlier revisions are settled in `decisions.md`.
+
 ## Deferred technical tasks
 
 Raised during design; each belongs to a milestone rather than to a free afternoon.
 
 | Task | Milestone |
 |------|-----------|
-| Exclusion constraint against overlapping bookings, written by hand in a SQL migration | 2 |
-| Stripe webhooks for payment and refund confirmation | 3 |
-| Scheduled job for next-day reminders | 3 |
+| Exclusion constraint against overlapping bookings, written by hand in a SQL migration — done | 2 |
+| Stripe webhooks for payment and refund confirmation — done | 3 |
+| Scheduled job for next-day reminders — done | 3 |
+| SMS or e-mail gateway behind `NotificationsService` (messages are only logged today) | 3 |
+| Deployment and a public URL | 1 |
 
 ## Cut order
 

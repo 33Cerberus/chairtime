@@ -1,0 +1,361 @@
+// Chairtime data model. Mirrors docs/data-model.md.
+// Constraints Prisma cannot express (exclusion constraint, checks) live in the
+// hand-written migration `*_constraints`.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CLIENT
+  BARBER
+  ADMIN
+  OWNER
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum ExceptionType {
+  BLOCKING
+  ADDITIONAL
+}
+
+enum BookingStatus {
+  BOOKED
+  IN_PROGRESS
+  COMPLETED
+  CANCELED
+  NO_SHOW
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+  REFUNDING
+  REFUNDED
+}
+
+enum OrderStatus {
+  CREATED
+  IN_PROGRESS
+  READY
+  RECEIVED
+  CANCELED
+}
+
+enum PaymentAttemptStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum OneTimeTokenPurpose {
+  SET_PASSWORD // staff invite or admin-issued password link (long random token)
+  PHONE_CLAIM // 6-digit code proving ownership of a phone before linking a record
+  PASSWORD_RESET // 6-digit code for self-service password reset
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+  firstName    String
+  lastName     String?
+  phoneNumber  String   @unique
+  email        String?  @unique
+  passwordHash String?
+  role         Role     @default(CLIENT)
+  isActive     Boolean  @default(true)
+
+  barberProfile BarberProfile?
+  cart          Cart?
+  bookings      Booking[]
+  orders        Order[]
+  refreshTokens RefreshToken[]
+  oneTimeTokens OneTimeToken[]
+  notifications Notification[]
+
+  @@index([role])
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @db.Timestamptz(3)
+  userId     String    @db.Uuid
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// SHA-256 of the opaque token. The token itself is never stored.
+  tokenHash  String    @unique
+  /// All tokens produced by rotating one login share a family.
+  familyId   String    @db.Uuid
+  expiresAt  DateTime  @db.Timestamptz(3)
+  revokedAt  DateTime? @db.Timestamptz(3)
+  userAgent  String?
+
+  @@index([userId])
+  @@index([familyId])
+}
+
+model OneTimeToken {
+  id          String              @id @default(uuid()) @db.Uuid
+  createdAt   DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime            @updatedAt @db.Timestamptz(3)
+  userId      String              @db.Uuid
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose     OneTimeTokenPurpose
+  tokenHash   String
+  expiresAt   DateTime            @db.Timestamptz(3)
+  usedAt      DateTime?           @db.Timestamptz(3)
+  attempts    Int                 @default(0)
+
+  @@index([userId, purpose])
+  @@index([tokenHash])
+}
+
+model BarberProfile {
+  id        String   @id @default(uuid()) @db.Uuid
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  userId    String   @unique @db.Uuid
+  user      User     @relation(fields: [userId], references: [id])
+  photoUrl  String?
+  bio       String?
+  /// Short public line under the name, e.g. "Master barber · fades & beards".
+  title     String?
+
+  workingIntervals WorkingInterval[]
+  exceptions       ScheduleException[]
+  services         BarberService[]
+  bookings         Booking[]
+}
+
+model Service {
+  id          String   @id @default(uuid()) @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  name        String   @unique
+  description String?
+  /// Minutes, multiple of 15.
+  duration    Int
+  isActive    Boolean  @default(true)
+
+  barbers  BarberService[]
+  bookings Booking[]
+}
+
+model BarberService {
+  id        String        @id @default(uuid()) @db.Uuid
+  createdAt DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime      @updatedAt @db.Timestamptz(3)
+  barberId  String        @db.Uuid
+  barber    BarberProfile @relation(fields: [barberId], references: [id])
+  serviceId String        @db.Uuid
+  service   Service       @relation(fields: [serviceId], references: [id])
+  /// Grosze.
+  price     Int
+
+  @@unique([barberId, serviceId])
+  @@index([serviceId])
+}
+
+model WorkingInterval {
+  id        String        @id @default(uuid()) @db.Uuid
+  createdAt DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime      @updatedAt @db.Timestamptz(3)
+  barberId  String        @db.Uuid
+  barber    BarberProfile @relation(fields: [barberId], references: [id])
+  dayOfWeek DayOfWeek
+  /// Local shop time.
+  startTime DateTime      @db.Time(0)
+  endTime   DateTime      @db.Time(0)
+
+  @@index([barberId, dayOfWeek])
+}
+
+model ScheduleException {
+  id        String        @id @default(uuid()) @db.Uuid
+  createdAt DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime      @updatedAt @db.Timestamptz(3)
+  barberId  String        @db.Uuid
+  barber    BarberProfile @relation(fields: [barberId], references: [id])
+  /// Local calendar date.
+  date      DateTime      @db.Date
+  type      ExceptionType
+  /// Both empty = whole day.
+  startTime DateTime?     @db.Time(0)
+  endTime   DateTime?     @db.Time(0)
+  /// Private note for staff, e.g. "dentist".
+  reason    String?
+
+  @@index([barberId, date])
+}
+
+model Booking {
+  id               String        @id @default(uuid()) @db.Uuid
+  createdAt        DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime      @updatedAt @db.Timestamptz(3)
+  clientId         String        @db.Uuid
+  client           User          @relation(fields: [clientId], references: [id])
+  barberId         String        @db.Uuid
+  barber           BarberProfile @relation(fields: [barberId], references: [id])
+  serviceId        String        @db.Uuid
+  service          Service       @relation(fields: [serviceId], references: [id])
+  /// UTC.
+  startAt          DateTime      @db.Timestamptz(3)
+  /// UTC; startAt + duration + 15-minute buffer.
+  endAt            DateTime      @db.Timestamptz(3)
+  status           BookingStatus @default(BOOKED)
+  paymentStatus    PaymentStatus @default(UNPAID)
+  /// Grosze; barber's price at booking time.
+  priceSnapshot    Int
+  /// Minutes; service duration at booking time.
+  durationSnapshot Int
+  reminderSentAt   DateTime?     @db.Timestamptz(3)
+  /// Optional note from the client or the reception.
+  note             String?
+  canceledAt       DateTime?     @db.Timestamptz(3)
+  cancelReason     String?
+
+  payments      Payment[]
+  notifications Notification[]
+
+  @@index([clientId, startAt])
+  @@index([barberId, startAt])
+  @@index([status, startAt])
+}
+
+model Payment {
+  id                    String               @id @default(uuid()) @db.Uuid
+  createdAt             DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime             @updatedAt @db.Timestamptz(3)
+  bookingId             String?              @db.Uuid
+  booking               Booking?             @relation(fields: [bookingId], references: [id])
+  orderId               String?              @db.Uuid
+  order                 Order?               @relation(fields: [orderId], references: [id])
+  /// Grosze.
+  amount                Int
+  /// Payment intent id. For the mock provider this is a generated `mock_pi_…` id.
+  stripePaymentIntentId String               @unique
+  status                PaymentAttemptStatus @default(PENDING)
+  /// "stripe" or "mock".
+  provider              String               @default("stripe")
+  stripeRefundId        String?
+  failureReason         String?
+
+  @@index([bookingId])
+  @@index([orderId])
+}
+
+/// Processed Stripe webhook events, for idempotency.
+model WebhookEvent {
+  id        String   @id
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  type      String
+}
+
+model Product {
+  id          String   @id @default(uuid()) @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  name        String   @unique
+  description String
+  /// Grosze.
+  price       Int
+  stock       Int
+  photoUrls   String[] @default([])
+  isActive    Boolean  @default(true)
+  /// Free-form grouping shown as a filter in the shop, e.g. "Styling".
+  category    String?
+
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+}
+
+model Cart {
+  id        String   @id @default(uuid()) @db.Uuid
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  userId    String   @unique @db.Uuid
+  user      User     @relation(fields: [userId], references: [id])
+
+  items CartItem[]
+}
+
+model CartItem {
+  id        String   @id @default(uuid()) @db.Uuid
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  cartId    String   @db.Uuid
+  cart      Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId String   @db.Uuid
+  product   Product  @relation(fields: [productId], references: [id])
+  quantity  Int
+
+  @@unique([cartId, productId])
+}
+
+model Order {
+  id            String        @id @default(uuid()) @db.Uuid
+  createdAt     DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime      @updatedAt @db.Timestamptz(3)
+  clientId      String        @db.Uuid
+  client        User          @relation(fields: [clientId], references: [id])
+  status        OrderStatus   @default(CREATED)
+  paymentStatus PaymentStatus @default(UNPAID)
+  /// Grosze; snapshot, sum of items at order time.
+  totalPrice    Int
+  /// Short human-readable code the client shows at the desk. Random, so it reveals no volumes.
+  pickupCode    String        @unique
+  canceledAt    DateTime?     @db.Timestamptz(3)
+
+  items    OrderItem[]
+  payments Payment[]
+
+  @@index([clientId, createdAt])
+  @@index([status, createdAt])
+}
+
+model OrderItem {
+  id            String   @id @default(uuid()) @db.Uuid
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
+  orderId       String   @db.Uuid
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId     String   @db.Uuid
+  product       Product  @relation(fields: [productId], references: [id])
+  quantity      Int
+  /// Grosze; price of one unit at order time.
+  priceSnapshot Int
+
+  @@index([orderId])
+}
+
+/// Log of messages sent to users (reminders, confirmations, codes are NOT stored here).
+model Notification {
+  id        String   @id @default(uuid()) @db.Uuid
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id])
+  bookingId String?  @db.Uuid
+  booking   Booking? @relation(fields: [bookingId], references: [id])
+  type      String
+  channel   String
+  body      String
+
+  @@index([userId, createdAt])
+}

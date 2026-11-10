@@ -1,0 +1,25 @@
+{
+  "name": "chairtime",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Booking and management system for a single-branch barbershop",
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:migrate": "npm run migrate:deploy -w apps/api",
+    "db:seed": "npm run seed -w apps/api",
+    "db:reset": "npm run migrate:reset -w apps/api",
+    "dev:api": "npm run dev -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "build": "npm run build -w apps/api && npm run build -w apps/web",
+    "test": "npm run test -w apps/api",
+    "typecheck": "npm run typecheck -w apps/api && npm run typecheck -w apps/web"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
