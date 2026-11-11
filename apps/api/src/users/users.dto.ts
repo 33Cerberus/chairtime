@@ -13,6 +13,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { PageQuery } from '../common/pagination';
+import { IsPassword } from '../common/password-policy';
 import { IsPhone } from '../common/phone';
 
 const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
@@ -35,7 +36,7 @@ export class UpdateUserDto {
 }
 
 export class UpdateMeDto extends UpdateUserDto {
-  @IsOptional() @IsString() @MinLength(8, { message: 'Password must be at least 8 characters' }) @MaxLength(128)
+  @IsOptional() @IsPassword()
   password?: string;
 
   /** Required together with `password`. */

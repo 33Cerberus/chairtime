@@ -14,15 +14,16 @@ const check = (name, ok, extra = '') => {
   console.log(`${ok ? '  ok  ' : ' FAIL '} ${name}${ok ? '' : ` ${extra}`}`);
 };
 
-async function call(method, path, { token, body, cookie } = {}) {
+async function call(method, path, { token, body, cookie, headers, form } = {}) {
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers: {
       ...(body ? { 'content-type': 'application/json' } : {}),
       ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(cookie ? { cookie } : {}),
+      ...headers,
     },
-    body: body ? JSON.stringify(body) : undefined,
+    body: form ?? (body ? JSON.stringify(body) : undefined),
   });
   const text = await res.text();
   let data = null;
@@ -31,7 +32,7 @@ async function call(method, path, { token, body, cookie } = {}) {
   } catch {
     data = text;
   }
-  return { status: res.status, data, cookie: res.headers.getSetCookie?.()[0]?.split(';')[0] };
+  return { status: res.status, data, headers: res.headers, cookie: res.headers.getSetCookie?.()[0]?.split(';')[0] };
 }
 
 const login = async (phoneNumber) => {
@@ -196,6 +197,71 @@ async function main() {
   check('refresh rotates the token', refreshed.status === 200 && !!refreshed.data.accessToken && refreshed.cookie !== client.cookie);
   check('refresh without a cookie is 401', (await call('POST', '/auth/refresh')).status === 401);
   check('logout revokes the session', (await call('POST', '/auth/logout', { cookie: refreshed.cookie })).status === 204 && (await call('POST', '/auth/refresh', { cookie: refreshed.cookie })).status === 401);
+
+  console.log('\nHardening');
+  check('responses carry a request id and nosniff', !!health.headers.get('x-request-id') && health.headers.get('x-content-type-options') === 'nosniff');
+  check('the server does not advertise its framework', !health.headers.get('x-powered-by'));
+  const config = await call('GET', '/payments/config');
+  check('payment provider is reported', ['mock', 'stripe', 'none'].includes(config.data.provider));
+  check('a refresh from a foreign origin is refused (403)', (await call('POST', '/auth/refresh', { cookie: owner.cookie, headers: { origin: 'https://evil.example' } })).status === 403);
+  const weak = await call('POST', '/auth/register', { body: { firstName: 'Weak', lastName: 'Pass', phoneNumber: '+4867' + String(Date.now()).slice(-7), password: 'password123' } });
+  check('a common password is rejected (400)', weak.status === 400, JSON.stringify(weak.data));
+
+  // Sign-in lock: counted per number, even one that has no account.
+  const ghost = '+4866' + String(Date.now()).slice(-7);
+  const tries = [];
+  for (let i = 0; i < 8; i++) tries.push((await call('POST', '/auth/login', { body: { phoneNumber: ghost, password: 'wrong-password' } })).status);
+  const locked = await call('POST', '/auth/login', { body: { phoneNumber: ghost, password: 'wrong-password' } });
+  check('eight wrong passwords are each a 401', tries.every((t) => t === 401), tries.join());
+  check('the ninth attempt is locked out (429 ACCOUNT_LOCKED)', locked.status === 429 && locked.data.code === 'ACCOUNT_LOCKED', JSON.stringify(locked.data));
+  await call('POST', '/auth/login', { body: { phoneNumber: PHONES.client2, password: 'wrong-password' } });
+  check('one wrong password does not lock a real account', (await call('POST', '/auth/login', { body: { phoneNumber: PHONES.client2, password: PASSWORD } })).status === 200);
+
+  // Uploads are judged by their bytes, not by the type the uploader claims.
+  const upload = (bytes) => {
+    const form = new FormData();
+    form.append('file', new Blob([bytes], { type: 'image/png' }), 'photo.png');
+    return call('POST', '/barbers/' + kuba.id + '/photo', { token: barber.token, form });
+  };
+  check('a script named .png is refused (400)', (await upload(Buffer.from('<script>alert(1)</script> not an image at all'))).status === 400);
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+  const uploaded = await upload(png);
+  check('a real PNG is accepted', uploaded.status === 201 && String(uploaded.data.photoUrl).includes('/barbers/'), JSON.stringify(uploaded.data));
+
+  // Races: the same request sent twice at once must take effect once.
+  const raceSlot = (await firstSlot(kuba.id, offer.serviceId, 10)).slot;
+  const bookRace = await Promise.all([client, client2].map((c) => call('POST', '/bookings', { token: c.token, body: { barberId: kuba.id, serviceId: offer.serviceId, startAt: raceSlot.startAt } })));
+  check('two clients racing for one slot: exactly one wins', bookRace.filter((r) => r.status === 201).length === 1 && bookRace.filter((r) => r.status === 409).length === 1, bookRace.map((r) => r.status).join());
+  const winner = bookRace.find((r) => r.status === 201).data;
+  const winnerToken = winner.client.id === client.user.id ? client.token : client2.token;
+  const racePay = await call('POST', '/bookings/' + winner.id + '/payments', { token: winnerToken });
+  const confirmRace = await Promise.all([1, 2].map(() => call('POST', '/payments/' + racePay.data.paymentId + '/mock-confirm', { token: winnerToken, body: { outcome: 'succeeded' } })));
+  check('a payment confirmed twice at once settles once', confirmRace.some((r) => r.status === 200) && (await call('GET', '/bookings/' + winner.id, { token: winnerToken })).data.paymentStatus === 'PAID', confirmRace.map((r) => r.status).join());
+  const cancelRace = await Promise.all([1, 2].map(() => call('POST', '/bookings/' + winner.id + '/cancel', { token: admin.token, body: {} })));
+  check('two cancellations at once: one succeeds, one is refused', cancelRace.filter((r) => r.status === 200).length === 1 && cancelRace.filter((r) => r.status === 409).length === 1, cancelRace.map((r) => r.status).join());
+  check('and the refund happened once', (await call('GET', '/bookings/' + winner.id, { token: admin.token })).data.paymentStatus === 'REFUNDED');
+
+  // One client, two barbers, the same moment.
+  const other = barbers.find((b) => b.id !== kuba.id && b.services.length);
+  const pair = [[kuba.id, offer.serviceId], [other.id, other.services[0].serviceId]];
+  let both = null;
+  for (let i = 5; i < 29 && !both; i++) {
+    const [a, b] = await Promise.all(pair.map(([bid, sid]) => call('GET', '/barbers/' + bid + '/slots?serviceId=' + sid + '&date=' + isoDate(i))));
+    both = a.data.slots?.find((x) => b.data.slots?.some((y) => y.startAt === x.startAt)) ?? null;
+  }
+  if (both) {
+    const twoChairs = await Promise.all(pair.map(([barberId, serviceId]) => call('POST', '/bookings', { token: client.token, body: { barberId, serviceId, startAt: both.startAt } })));
+    check('one client cannot take two chairs at the same moment', twoChairs.filter((r) => r.status === 201).length === 1, twoChairs.map((r) => r.status + ' ' + (r.data.code ?? '')).join());
+  }
+
+  console.log('\nAudit trail');
+  check('the audit log is owner-only (403 for admin)', (await call('GET', '/audit-log', { token: admin.token })).status === 403);
+  // Entries are written just after the response, so give the last ones a moment.
+  await new Promise((r) => setTimeout(r, 300));
+  const audit = await call('GET', '/audit-log?limit=100', { token: owner.token });
+  check('staff changes are recorded with who and what', audit.status === 200 && audit.data.items.some((a) => a.route.endsWith('/users/clients') && a.actor?.id === admin.user.id));
+  check('refused attempts are recorded too', audit.data.items.some((a) => a.statusCode === 409));
+  check('client actions are not in the staff trail', !audit.data.items.some((a) => a.actor?.id === client.user.id));
 
   console.log(`\n${passed} passed, ${failures.length} failed`);
   if (failures.length) {

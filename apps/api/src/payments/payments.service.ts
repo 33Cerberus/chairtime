@@ -6,6 +6,7 @@ import Stripe from 'stripe';
 import { AuthUser } from '../common/auth-user';
 import { badRequest, conflict, notFound } from '../common/errors';
 import { PrismaService } from '../common/prisma.service';
+import { runtime } from '../common/runtime';
 
 /** A payment belongs to exactly one booking or one order. */
 export type PaymentTarget = { bookingId: string } | { orderId: string };
@@ -29,23 +30,34 @@ export class PaymentsService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
   ) {
-    const key = this.config.get<string>('STRIPE_SECRET_KEY');
-    if (key) this.stripe = new Stripe(key);
-    else if (this.config.get('NODE_ENV') === 'production') {
-      this.logger.warn('STRIPE_SECRET_KEY is not set: online payments run on the MOCK provider.');
-    }
+    if (runtime.stripe.secretKey) this.stripe = new Stripe(runtime.stripe.secretKey);
   }
 
-  get provider(): 'stripe' | 'mock' {
-    return this.stripe ? 'stripe' : 'mock';
+  /**
+   * `none` in production without Stripe: nobody can "pay" without money moving. The mock
+   * provider exists for development, and in production only behind ALLOW_MOCK_PAYMENTS.
+   */
+  get provider(): 'stripe' | 'mock' | 'none' {
+    return this.stripe ? 'stripe' : runtime.mockPayments ? 'mock' : 'none';
+  }
+
+  /** Whether clients can pay online at all. Drives the `pay` action on bookings and orders. */
+  get enabled() {
+    return this.provider !== 'none';
   }
 
   publicConfig() {
     return {
       provider: this.provider,
-      publishableKey: this.stripe ? (this.config.get<string>('STRIPE_PUBLISHABLE_KEY') ?? null) : null,
+      publishableKey: this.stripe ? runtime.stripe.publishableKey || null : null,
       currency: CURRENCY,
     };
+  }
+
+  private assertEnabled() {
+    if (!this.enabled) {
+      throw conflict('Online payment is not available. Please pay at the shop.', 'ONLINE_PAYMENTS_UNAVAILABLE');
+    }
   }
 
   // ---- Starting a payment -----------------------------------------------------------------
@@ -69,6 +81,7 @@ export class PaymentsService {
   }
 
   private async start(target: PaymentTarget, amount: number, description: string) {
+    this.assertEnabled();
     // Reuse an open attempt instead of piling up intents when the client reopens checkout.
     const open = await this.prisma.payment.findFirst({
       where: { ...target, status: PaymentAttemptStatus.PENDING, provider: this.provider, amount },
@@ -126,14 +139,29 @@ export class PaymentsService {
     if (!payment || payment.status !== PaymentAttemptStatus.PENDING) return;
     const target = this.targetOf(payment);
 
-    // The booking or order may have changed while the client was paying.
-    const state = await this.targetState(target);
-    const settles = state && !state.canceled && state.paymentStatus === PaymentStatus.UNPAID;
-
-    await this.prisma.$transaction(async (tx) => {
-      await tx.payment.update({ where: { id: payment.id }, data: { status: PaymentAttemptStatus.SUCCEEDED } });
-      if (settles) await this.setPaymentStatus(tx, target, PaymentStatus.PAID);
+    const settles = await this.prisma.$transaction(async (tx) => {
+      // Claim the attempt: the same success delivered twice (a retried webhook, a double
+      // click) is applied once.
+      const claimed = await tx.payment.updateMany({
+        where: { id: payment.id, status: PaymentAttemptStatus.PENDING },
+        data: { status: PaymentAttemptStatus.SUCCEEDED },
+      });
+      if (claimed.count !== 1) return null;
+      // The booking or order may have changed while the client was paying. Only an unpaid,
+      // live record is settled; the conditional update makes that check and the write one step.
+      const live =
+        'bookingId' in target
+          ? await tx.booking.updateMany({
+              where: { id: target.bookingId, paymentStatus: PaymentStatus.UNPAID, status: { not: BookingStatus.CANCELED } },
+              data: { paymentStatus: PaymentStatus.PAID },
+            })
+          : await tx.order.updateMany({
+              where: { id: target.orderId, paymentStatus: PaymentStatus.UNPAID, status: { not: OrderStatus.CANCELED } },
+              data: { paymentStatus: PaymentStatus.PAID },
+            });
+      return live.count === 1;
     });
+    if (settles === null) return;
 
     if (!settles) {
       // Paid for something that was canceled, or paid twice: give the money straight back.
@@ -180,14 +208,33 @@ export class PaymentsService {
   /**
    * Refunds the online payment of a booking or order.
    * `none` means it was paid in cash (no online payment exists): the refund is handed back
-   * at the desk and an administrator sets REFUNDED by hand.
+   * at the desk and an administrator sets REFUNDED by hand. `failed` means the provider
+   * refused; the record stays PAID and the refund has to be retried.
    */
-  async refund(target: PaymentTarget): Promise<'none' | 'refunding' | 'refunded'> {
+  async refund(target: PaymentTarget): Promise<'none' | 'refunding' | 'refunded' | 'failed'> {
     const payment = await this.prisma.payment.findFirst({ where: { ...target, status: PaymentAttemptStatus.SUCCEEDED } });
     if (!payment) return 'none';
-    await this.setPaymentStatus(this.prisma, target, PaymentStatus.REFUNDING);
-    const settled = await this.refundPayment(payment.id, payment.stripePaymentIntentId);
-    return settled ? 'refunded' : 'refunding';
+    // PAID -> REFUNDING happens exactly once; a second caller must not start a second refund.
+    const claimed =
+      'bookingId' in target
+        ? await this.prisma.booking.updateMany({
+            where: { id: target.bookingId, paymentStatus: PaymentStatus.PAID },
+            data: { paymentStatus: PaymentStatus.REFUNDING },
+          })
+        : await this.prisma.order.updateMany({
+            where: { id: target.orderId, paymentStatus: PaymentStatus.PAID },
+            data: { paymentStatus: PaymentStatus.REFUNDING },
+          });
+    if (claimed.count !== 1) return 'refunding';
+    try {
+      const settled = await this.refundPayment(payment.id, payment.stripePaymentIntentId);
+      return settled ? 'refunded' : 'refunding';
+    } catch (e) {
+      // The provider refused: the money is still with the shop, so the record goes back to PAID.
+      await this.setPaymentStatus(this.prisma, target, PaymentStatus.PAID);
+      this.logger.error(`Refund of payment ${payment.id} failed: ${e instanceof Error ? e.message : e}`);
+      return 'failed';
+    }
   }
 
   /** Returns true when the refund is already complete (mock, or Stripe answered synchronously). */
@@ -216,6 +263,21 @@ export class PaymentsService {
     }
   }
 
+  /** Closes checkouts that were opened and never finished. Returns how many. */
+  async expireAbandoned(olderThan: Date) {
+    const stale = await this.prisma.payment.findMany({
+      where: { status: PaymentAttemptStatus.PENDING, createdAt: { lt: olderThan } },
+      take: 500,
+    });
+    for (const p of stale) {
+      await this.onFailed(p.stripePaymentIntentId, 'Abandoned');
+      if (this.stripe && !p.stripePaymentIntentId.startsWith('mock_')) {
+        await this.stripe.paymentIntents.cancel(p.stripePaymentIntentId).catch(() => undefined);
+      }
+    }
+    return stale.length;
+  }
+
   /**
    * Manual change by an administrator (cash at the desk, corrections).
    * Returns the status the record should now have.
@@ -231,7 +293,11 @@ export class PaymentsService {
     }
     if (current === PaymentStatus.PAID && next === PaymentStatus.REFUNDED) {
       if (!hasOnline) return PaymentStatus.REFUNDED; // cash handed back at the desk
-      return (await this.refund(target)) === 'refunded' ? PaymentStatus.REFUNDED : PaymentStatus.REFUNDING;
+      const outcome = await this.refund(target);
+      if (outcome === 'failed') {
+        throw conflict('The refund could not be started. Nothing was refunded; try again, or refund it in Stripe.', 'REFUND_FAILED');
+      }
+      return outcome === 'refunded' ? PaymentStatus.REFUNDED : PaymentStatus.REFUNDING;
     }
     throw conflict(`Payment status cannot go from ${current} to ${next}`, 'INVALID_TRANSITION');
   }
@@ -239,7 +305,7 @@ export class PaymentsService {
   // ---- Stripe webhook -----------------------------------------------------------------------
 
   async handleWebhook(rawBody: Buffer | undefined, signature: string | undefined) {
-    const secret = this.config.get<string>('STRIPE_WEBHOOK_SECRET');
+    const secret = runtime.stripe.webhookSecret;
     if (!this.stripe || !secret) throw notFound('Webhook');
     if (!rawBody || !signature) throw badRequest('Missing Stripe signature');
     let event: Stripe.Event;

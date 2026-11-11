@@ -25,6 +25,8 @@ jobs:
           --health-retries 10
 
     env:
+      # Unset would mean production: the smoke test needs codes echoed back and the test checkout.
+      NODE_ENV: test
       DATABASE_URL: postgresql://chairtime:chairtime@localhost:5433/chairtime?schema=public
       JWT_ACCESS_SECRET: ci-only-secret-ci-only-secret-ci-only-secret
       WEB_ORIGIN: http://localhost:5173
@@ -66,3 +68,16 @@ jobs:
             sleep 1
           done
           npm run smoke -w apps/api
+
+      - name: Refuses to start with an unsafe production configuration
+        run: |
+          if NODE_ENV=production JWT_ACCESS_SECRET=short PORT=4100 node apps/api/dist/main.js; then
+            echo "The API started with a weak secret in production" && exit 1
+          fi
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the production image
+        run: docker build -t chairtime:ci .

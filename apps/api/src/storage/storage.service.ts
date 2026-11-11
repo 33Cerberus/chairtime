@@ -17,6 +17,16 @@ const TYPES: Record<string, string> = {
   'image/avif': 'avif',
 };
 
+/** Recognises an image by its signature. Returns its MIME type, or null. */
+export function sniffImage(b: Buffer): string | null {
+  if (b.length < 12) return null;
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP') return 'image/webp';
+  if (b.toString('latin1', 4, 8) === 'ftyp' && ['avif', 'avis'].includes(b.toString('latin1', 8, 12))) return 'image/avif';
+  return null;
+}
+
 export interface UploadedImage {
   buffer: Buffer;
   mimetype: string;
@@ -47,11 +57,14 @@ export class StorageService {
   }
 
   async saveImage(file: UploadedImage | undefined, folder: 'barbers' | 'products'): Promise<string> {
-    if (!file) throw badRequest('Attach an image in the `file` field');
-    const ext = TYPES[file.mimetype];
-    if (!ext) throw badRequest('Upload a JPEG, PNG, WebP or AVIF image');
+    if (!file?.buffer?.length) throw badRequest('Attach an image in the `file` field');
     if (file.size > MAX_UPLOAD_BYTES) throw badRequest('The image must be 5 MB or smaller');
-    const key = `${folder}/${randomUUID()}.${ext}`;
+    // The type comes from the file's own first bytes, never from what the uploader claims:
+    // a script renamed to .png is not an image.
+    const mimetype = sniffImage(file.buffer);
+    if (!mimetype) throw badRequest('Upload a JPEG, PNG, WebP or AVIF image');
+    const key = `${folder}/${randomUUID()}.${TYPES[mimetype]}`;
+    file = { ...file, mimetype };
 
     if (this.s3 && this.bucket) {
       await this.s3.send(

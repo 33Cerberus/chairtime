@@ -223,6 +223,7 @@ const ORDER_REFUND = {
   manual: 'Order canceled. It was paid in cash — collect your refund at the shop.',
   refunding: 'Order canceled. The refund is on its way to your card.',
   refunded: 'Order canceled and refunded.',
+  failed: 'Order canceled. The refund could not be started automatically — the shop will sort it out.',
 };
 
 export function AccountOrders() {

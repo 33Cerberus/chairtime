@@ -80,7 +80,7 @@ export class BookingsService {
       actions: {
         move: booked && (admin || (isClient && inWindow)),
         cancel: booked && (admin || (isClient && inWindow)),
-        pay: isClient && ACTIVE.includes(b.status) && b.paymentStatus === PaymentStatus.UNPAID,
+        pay: this.payments.enabled && isClient && ACTIVE.includes(b.status) && b.paymentStatus === PaymentStatus.UNPAID,
         start: staff && booked && now >= start - EARLY_START_MIN * MINUTE,
         complete: staff && b.status === BookingStatus.IN_PROGRESS,
         noShow: staff && booked && now >= start + NO_SHOW_WAIT_MIN * MINUTE,
@@ -171,22 +171,27 @@ export class BookingsService {
     const startAt = new Date(dto.startAt);
     const duration = offer.service.duration;
     await this.availability.assertBookable(dto.barberId, startAt, duration);
-    await this.assertClientFree(clientId, startAt, duration);
 
     // Price and duration are copied in: later catalog changes never touch this booking.
-    // The exclusion constraint in the database is what finally guarantees no overlap.
-    const created = await this.prisma.booking.create({
-      data: {
-        clientId,
-        barberId: dto.barberId,
-        serviceId: dto.serviceId,
-        startAt,
-        endAt: new Date(startAt.getTime() + (duration + BUFFER_MIN) * MINUTE),
-        priceSnapshot: offer.price,
-        durationSnapshot: duration,
-        note: dto.note?.trim() || null,
-      },
-      include: INCLUDE,
+    // Two guarantees against a race: the exclusion constraint in the database keeps a barber's
+    // bookings from overlapping, and the per-client lock makes "is the client free?" and the
+    // insert one step, so two simultaneous requests cannot both pass the check.
+    const created = await this.prisma.$transaction(async (tx) => {
+      await this.lockClient(tx, clientId);
+      await this.assertClientFree(tx, clientId, startAt, duration);
+      return tx.booking.create({
+        data: {
+          clientId,
+          barberId: dto.barberId,
+          serviceId: dto.serviceId,
+          startAt,
+          endAt: new Date(startAt.getTime() + (duration + BUFFER_MIN) * MINUTE),
+          priceSnapshot: offer.price,
+          durationSnapshot: duration,
+          note: dto.note?.trim() || null,
+        },
+        include: INCLUDE,
+      });
     });
     await this.notifications.notify(
       clientId,
@@ -197,10 +202,21 @@ export class BookingsService {
     return this.view(created, user);
   }
 
+  /** Serialises the booking changes of one client for the length of the transaction. */
+  private async lockClient(tx: Prisma.TransactionClient, clientId: string) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${clientId}))`;
+  }
+
   /** A person cannot sit in two chairs at once. */
-  private async assertClientFree(clientId: string, startAt: Date, duration: number, excludeId?: string) {
+  private async assertClientFree(
+    tx: Prisma.TransactionClient,
+    clientId: string,
+    startAt: Date,
+    duration: number,
+    excludeId?: string,
+  ) {
     const serviceEnd = startAt.getTime() + duration * MINUTE;
-    const nearby = await this.prisma.booking.findMany({
+    const nearby = await tx.booking.findMany({
       where: {
         clientId,
         status: { in: ACTIVE },
@@ -234,15 +250,20 @@ export class BookingsService {
 
     // The stored duration is used, so a later change to the service does not resize this booking.
     await this.availability.assertBookable(b.barberId, startAt, b.durationSnapshot, b.id);
-    await this.assertClientFree(b.clientId, startAt, b.durationSnapshot, b.id);
-    const moved = await this.prisma.booking.update({
-      where: { id },
-      data: {
-        startAt,
-        endAt: new Date(startAt.getTime() + (b.durationSnapshot + BUFFER_MIN) * MINUTE),
-        reminderSentAt: null,
-      },
-      include: INCLUDE,
+    const moved = await this.prisma.$transaction(async (tx) => {
+      await this.lockClient(tx, b.clientId);
+      await this.assertClientFree(tx, b.clientId, startAt, b.durationSnapshot, b.id);
+      // Only a booking that is still BOOKED moves: it may have been canceled or started meanwhile.
+      const changed = await tx.booking.updateMany({
+        where: { id, status: BookingStatus.BOOKED },
+        data: {
+          startAt,
+          endAt: new Date(startAt.getTime() + (b.durationSnapshot + BUFFER_MIN) * MINUTE),
+          reminderSentAt: null,
+        },
+      });
+      if (changed.count !== 1) throw conflict('This booking has just changed. Reload and try again.', 'NOT_MOVABLE');
+      return tx.booking.findUniqueOrThrow({ where: { id }, include: INCLUDE });
     });
     await this.notifications.notify(
       b.clientId,
@@ -284,11 +305,13 @@ export class BookingsService {
     b: { id: string; paymentStatus: PaymentStatus },
     reason: string | undefined,
     refund: boolean,
-  ): Promise<'none' | 'manual' | 'refunding' | 'refunded'> {
-    await this.prisma.booking.update({
-      where: { id: b.id },
+  ): Promise<'none' | 'manual' | 'refunding' | 'refunded' | 'failed'> {
+    // Guarded: of two cancellations arriving together only one proceeds, so a refund starts once.
+    const changed = await this.prisma.booking.updateMany({
+      where: { id: b.id, status: BookingStatus.BOOKED },
       data: { status: BookingStatus.CANCELED, canceledAt: new Date(), cancelReason: reason?.trim() || null },
     });
+    if (changed.count !== 1) throw conflict('This booking has just changed. Reload and try again.', 'NOT_CANCELABLE');
     await this.payments.cancelPending({ bookingId: b.id });
     if (b.paymentStatus !== PaymentStatus.PAID || !refund) return 'none';
     const result = await this.payments.refund({ bookingId: b.id });
@@ -302,7 +325,8 @@ export class BookingsService {
     });
     for (const b of upcoming) {
       const inWindow = b.startAt.getTime() - Date.now() >= CLIENT_CHANGE_WINDOW_HOURS * HOUR;
-      await this.cancelInternal(b, reason, inWindow);
+      // A booking that changed in the meantime (started, already canceled) is simply skipped.
+      await this.cancelInternal(b, reason, inWindow).catch(() => undefined);
     }
     return upcoming.length;
   }
@@ -331,7 +355,10 @@ export class BookingsService {
     } else {
       throw badRequest('Unsupported status');
     }
-    const updated = await this.prisma.booking.update({ where: { id }, data: { status }, include: INCLUDE });
+    // Guarded by the status that was checked above: a concurrent change loses cleanly.
+    const changed = await this.prisma.booking.updateMany({ where: { id, status: b.status }, data: { status } });
+    if (changed.count !== 1) throw conflict('This booking has just changed. Reload and try again.', 'INVALID_TRANSITION');
+    const updated = await this.prisma.booking.findUniqueOrThrow({ where: { id }, include: INCLUDE });
     return this.view(updated, user);
   }
 

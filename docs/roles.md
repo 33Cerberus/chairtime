@@ -5,7 +5,7 @@
 - **Client** — books services and buys products.
 - **Barber** — performs services and manages their own schedule.
 - **Administrator** — runs day-to-day operations: bookings, catalog, orders.
-- **Owner** — Administrator + `Create staff account` + `Change user role` + `View global analytics`.
+- **Owner** — Administrator + `Create staff account` + `Change user role` + `View global analytics` + `View the staff activity log`.
 
 ## Legend
 
@@ -74,6 +74,7 @@
 | Pay for order online | own | own | own |
 | **Analytics** | | | |
 | View global analytics | ✗ | ✗ | ✗ |
+| View the staff activity log | ✗ | ✗ | ✗ |
 
 ## Business rules
 

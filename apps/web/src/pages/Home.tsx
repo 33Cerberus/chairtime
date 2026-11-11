@@ -136,13 +136,18 @@ export default function Home() {
               <div className="flex items-center gap-2.5">
                 <Clock className="size-4 text-brass-300" />
                 <span>
-                  Mon–Fri <span className="tnum text-paper">9–20</span> · Sat <span className="tnum text-paper">10–16</span>
+                  {SHOP.hoursShort.map(([days, hours], i) => (
+                    <span key={days}>
+                      {i > 0 && ' · '}
+                      {days} <span className="tnum text-paper">{hours}</span>
+                    </span>
+                  ))}
                 </span>
               </div>
               <div className="flex items-center gap-2.5">
                 <MapPin className="size-4 text-brass-300" />
                 <span>
-                  {SHOP.address}, <span className="text-paper">Śródmieście</span>
+                  {SHOP.address}, <span className="text-paper">{SHOP.district}</span>
                 </span>
               </div>
             </dl>

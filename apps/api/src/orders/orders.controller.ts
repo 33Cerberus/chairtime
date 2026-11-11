@@ -104,7 +104,11 @@ export class OrdersService {
       })),
       actions: {
         cancel: open && (admin || o.clientId === viewer.id),
-        pay: o.clientId === viewer.id && o.status !== OrderStatus.CANCELED && o.paymentStatus === PaymentStatus.UNPAID,
+        pay:
+          this.payments.enabled &&
+          o.clientId === viewer.id &&
+          o.status !== OrderStatus.CANCELED &&
+          o.paymentStatus === PaymentStatus.UNPAID,
         advanceTo: admin ? (NEXT[o.status] ?? null) : null,
         markPaid: admin && o.paymentStatus === PaymentStatus.UNPAID && o.status !== OrderStatus.CANCELED,
         refund: admin && o.paymentStatus === PaymentStatus.PAID,
@@ -252,7 +256,10 @@ export class OrdersService {
     if (status === OrderStatus.RECEIVED && o.paymentStatus !== PaymentStatus.PAID) {
       throw conflict('Take the payment before handing the order over', 'UNPAID');
     }
-    const updated = await this.prisma.order.update({ where: { id }, data: { status }, include: INCLUDE });
+    // Guarded by the status checked above, so two clicks cannot advance an order twice.
+    const changed = await this.prisma.order.updateMany({ where: { id, status: o.status }, data: { status } });
+    if (changed.count !== 1) throw conflict('This order has just changed. Reload and try again.', 'INVALID_TRANSITION');
+    const updated = await this.prisma.order.findUniqueOrThrow({ where: { id }, include: INCLUDE });
     if (status === OrderStatus.READY) {
       await this.notifications.notify(
         o.clientId,

@@ -180,14 +180,17 @@ const CLIENTS: [first: string, last: string | null, canSignIn: boolean][] = [
 ];
 
 async function main() {
-  if (process.env.NODE_ENV === 'production') throw new Error('The seed wipes the database and must not run in production.');
+  // Unset counts as production, exactly as it does for the API.
+  if ((process.env.NODE_ENV || 'production') === 'production') {
+    throw new Error('The seed WIPES the database. It runs only with NODE_ENV=development or test, never in production.');
+  }
   mkdirSync(artDir, { recursive: true });
 
   console.log('Clearing existing data…');
   await prisma.$executeRawUnsafe(`TRUNCATE TABLE
     "Notification","WebhookEvent","Payment","OrderItem","Order","CartItem","Cart","Booking",
     "ScheduleException","WorkingInterval","BarberService","Service","BarberProfile","Product",
-    "OneTimeToken","RefreshToken","User" CASCADE`);
+    "OneTimeToken","RefreshToken","AuditLog","LoginThrottle","User" CASCADE`);
 
   const passwordHash = await hash(DEMO_PASSWORD);
   const today = todayLocal();

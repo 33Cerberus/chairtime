@@ -1,0 +1,5 @@
+# Keep text files LF everywhere: the same bytes on Windows, in CI and in Docker.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.webp binary

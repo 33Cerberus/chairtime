@@ -1,11 +1,11 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight, CalendarPlus, Check, Clock, CreditCard, Store } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router';
 import { PaymentDialog, PayTarget } from '../components/PaymentDialog';
 import { SlotPicker } from '../components/SlotPicker';
 import { Avatar, Button, ButtonLink, cn, Notice, PageLoader, Textarea, toast } from '../components/ui';
-import { api, ApiError, Barber, Booking, errorMessage, Service, Slot } from '../lib/api';
+import { api, ApiError, Barber, Booking, errorMessage, PaymentConfig, Service, Slot } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { dayLong, duration, fullName, isoDate, money, time } from '../lib/format';
 import { useBarbers, useServices } from './Home';
@@ -54,6 +54,10 @@ export default function Book() {
   const start = params.get('start');
   const date = params.get('date') ?? isoDate();
 
+  // Online payment is offered only when the server can actually take one.
+  const payments = useQuery({ queryKey: ['payments-config'], queryFn: () => api<PaymentConfig>('/payments/config'), staleTime: 5 * 60_000 });
+  const canPayOnline = !!payments.data && payments.data.provider !== 'none';
+
   const [note, setNote] = useState('');
   const [payOnline, setPayOnline] = useState(false);
   const [done, setDone] = useState<Booking | null>(null);
@@ -95,7 +99,7 @@ export default function Book() {
       queryClient.invalidateQueries({ queryKey: ['slot-calendar'] });
       setDone(booking);
       window.scrollTo({ top: 0, behavior: 'smooth' });
-      if (payOnline) setPay({ kind: 'bookings', id: booking.id, label: `${booking.service.name} with ${booking.barber.firstName}`, amount: booking.priceSnapshot });
+      if (payOnline && canPayOnline) setPay({ kind: 'bookings', id: booking.id, label: `${booking.service.name} with ${booking.barber.firstName}`, amount: booking.priceSnapshot });
     },
     onError: (e) => {
       toast.error(errorMessage(e));
@@ -341,7 +345,10 @@ export default function Book() {
                 </Notice>
               ) : (
                 <div className="mt-8 space-y-7">
-                  <fieldset>
+                  {!canPayOnline && (
+                    <Notice tone="info">You pay at the shop after your visit — card or cash.</Notice>
+                  )}
+                  <fieldset hidden={!canPayOnline}>
                     <legend className="eyebrow mb-3">Payment</legend>
                     <div className="grid gap-3 sm:grid-cols-2">
                       {[

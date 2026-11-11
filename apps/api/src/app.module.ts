@@ -1,9 +1,10 @@
 import { Controller, Get, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ApiTags } from '@nestjs/swagger';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { AuditController, AuditInterceptor } from './audit/audit';
 import { AuthGuard, RolesGuard } from './auth/auth.guard';
 import { AuthModule } from './auth/auth.module';
 import { BookingsController } from './bookings/bookings.controller';
@@ -14,6 +15,7 @@ import { ServicesController, ServicesService } from './catalog/services.controll
 import { Public } from './common/auth-user';
 import { PrismaModule, PrismaService } from './common/prisma.service';
 import { SHOP_TZ } from './common/time';
+import { MaintenanceJob } from './notifications/maintenance.job';
 import { NotificationsModule } from './notifications/notifications.service';
 import { RemindersJob } from './notifications/reminders.job';
 import { CartController, CartService } from './orders/cart.controller';
@@ -63,12 +65,15 @@ class HealthController {
     OrdersController,
     PaymentsController,
     ReportsController,
+    AuditController,
   ],
   providers: [
     // Order matters: rate limit, then identify the caller, then check the role.
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
+    { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
+    MaintenanceJob,
     AvailabilityService,
     ScheduleService,
     PaymentsService,

@@ -5,12 +5,26 @@ import { PublicLayout, StaffLayout } from './components/Layouts';
 import { ButtonLink, Empty, PageLoader, Toaster } from './components/ui';
 import { Role } from './lib/api';
 import { homeFor, useAuth } from './lib/auth';
-import { AccountBookings, AccountLayout, AccountOrders, AccountProfile } from './pages/Account';
-import { LoginPage, RegisterPage, ResetPasswordPage, SetPasswordPage } from './pages/Auth';
-import Book from './pages/Book';
-import { BarberPage, BarbersPage, ServicesPage } from './pages/Catalog';
 import Home from './pages/Home';
-import { ProductPage_, ShopPage } from './pages/Shop';
+
+// Only the home page ships in the first download; every other screen loads when it is opened.
+const named = <M, K extends keyof M>(load: () => Promise<M>, key: K) =>
+  lazy(() => load().then((m) => ({ default: m[key] as React.ComponentType })));
+
+const Book = lazy(() => import('./pages/Book'));
+const ServicesPage = named(() => import('./pages/Catalog'), 'ServicesPage');
+const BarbersPage = named(() => import('./pages/Catalog'), 'BarbersPage');
+const BarberPage = named(() => import('./pages/Catalog'), 'BarberPage');
+const ShopPage = named(() => import('./pages/Shop'), 'ShopPage');
+const ProductPage_ = named(() => import('./pages/Shop'), 'ProductPage_');
+const AccountLayout = named(() => import('./pages/Account'), 'AccountLayout');
+const AccountBookings = named(() => import('./pages/Account'), 'AccountBookings');
+const AccountOrders = named(() => import('./pages/Account'), 'AccountOrders');
+const AccountProfile = named(() => import('./pages/Account'), 'AccountProfile');
+const LoginPage = named(() => import('./pages/Auth'), 'LoginPage');
+const RegisterPage = named(() => import('./pages/Auth'), 'RegisterPage');
+const ResetPasswordPage = named(() => import('./pages/Auth'), 'ResetPasswordPage');
+const SetPasswordPage = named(() => import('./pages/Auth'), 'SetPasswordPage');
 
 // The staff area is a separate chunk: clients never download it.
 const DayBoard = lazy(() => import('./pages/staff/DayBoard'));
@@ -21,6 +35,7 @@ const StaffServices = lazy(() => import('./pages/staff/Services'));
 const StaffTeam = lazy(() => import('./pages/staff/Team'));
 const StaffProducts = lazy(() => import('./pages/staff/Products'));
 const Analytics = lazy(() => import('./pages/staff/Analytics'));
+const Activity = lazy(() => import('./pages/staff/Activity'));
 const MySchedule = lazy(() => import('./pages/staff/Team').then((m) => ({ default: m.MySchedule })));
 const MyProfile = lazy(() => import('./pages/staff/Team').then((m) => ({ default: m.MyProfile })));
 
@@ -101,6 +116,7 @@ export default function App() {
             <Route path="team" element={<Guard roles={ADMINS}><StaffTeam /></Guard>} />
             <Route path="products" element={<Guard roles={ADMINS}><StaffProducts /></Guard>} />
             <Route path="analytics" element={<Guard roles={['OWNER']}><Analytics /></Guard>} />
+            <Route path="activity" element={<Guard roles={['OWNER']}><Activity /></Guard>} />
           </Route>
         </Routes>
       </Suspense>

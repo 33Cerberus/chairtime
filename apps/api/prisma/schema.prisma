@@ -88,6 +88,7 @@ model User {
   refreshTokens RefreshToken[]
   oneTimeTokens OneTimeToken[]
   notifications Notification[]
+  auditEntries  AuditLog[]
 
   @@index([role])
 }
@@ -236,6 +237,7 @@ model Booking {
   @@index([clientId, startAt])
   @@index([barberId, startAt])
   @@index([status, startAt])
+  @@index([startAt])
 }
 
 model Payment {
@@ -258,6 +260,7 @@ model Payment {
 
   @@index([bookingId])
   @@index([orderId])
+  @@index([status, createdAt])
 }
 
 /// Processed Stripe webhook events, for idempotency.
@@ -327,6 +330,7 @@ model Order {
 
   @@index([clientId, createdAt])
   @@index([status, createdAt])
+  @@index([createdAt])
 }
 
 model OrderItem {
@@ -358,4 +362,31 @@ model Notification {
   body      String
 
   @@index([userId, createdAt])
+}
+
+/// Wrong-password attempts per phone number, whether or not an account exists for it.
+model LoginThrottle {
+  phoneNumber String    @id
+  failures    Int       @default(0)
+  lockedUntil DateTime? @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
+}
+
+/// Who changed what: every state-changing request made by a member of staff.
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  actorId    String?  @db.Uuid
+  actor      User?    @relation(fields: [actorId], references: [id])
+  actorRole  Role?
+  method     String
+  /// The route pattern, e.g. /api/v1/bookings/:id/cancel — never the query string.
+  route      String
+  /// The record acted on, when the route names one.
+  targetId   String?
+  statusCode Int
+  ip         String?
+
+  @@index([createdAt])
+  @@index([actorId, createdAt])
 }
