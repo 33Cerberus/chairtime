@@ -91,5 +91,58 @@ sent the day before, between 9:00 and 21:00 shop time; moving a booking re-arms 
 ## 4. Not done
 
 - **Mobile client** (milestone 4). The API is ready for it (`X-Client-Type: mobile`), the app is not built.
-- **SMS / e-mail delivery.** Messages and codes are logged, not sent. Plug a gateway into `NotificationsService`.
-- **Deployment.** Runs locally; nothing is deployed.
+- **SMS delivery.** A Twilio transport exists but has not been run against Twilio.
+- **Deployment.** A production image and compose stack exist (`operations.md`); nothing is deployed.
+
+## 5. Running it for real
+
+Decisions made when preparing the system for a real shop. The procedures are in `operations.md`.
+
+**Production is the default.** With `NODE_ENV` unset the API behaves as in production. A forgotten
+variable must never turn on a development convenience.
+
+**Nothing is simulated in production.** In development, payments settle on a mock provider and
+text messages are printed to the log. In production both are off unless the real service is
+configured: without Stripe, online payment is hidden and cannot be started; without an SMS
+gateway, one-time codes are not issued at all (`503`) rather than written to a log, where anyone
+with log access could take over an account.
+
+**The API refuses to start on unsafe configuration** — a weak signing secret, a non-HTTPS public
+origin, half-configured Stripe or SMS — and says why. A shop should find out at deploy time, not
+when a client cannot pay.
+
+**Sign-in is limited twice.** Per address, so one machine cannot hammer the endpoint; the limit is
+20 a minute because a whole shop shares one address. Per phone number, 8 wrong passwords pause
+sign-in for 15 minutes — counted even for numbers with no account, and a non-existent account
+takes as long to reject as a wrong password, so neither the lock nor the timing reveals which
+numbers are registered. The cost is that someone can lock another person out for 15 minutes by
+guessing; a password reset or an administrator's link lifts it.
+
+**Every money and state change is applied once.** Checks followed by writes were replaced by
+conditional writes: cancel only if still `BOOKED`, settle only if still `UNPAID`, start a refund
+only if still `PAID`, use a code only if unused. Two identical requests arriving together — a
+double click, a retried webhook — can no longer both succeed, so a refund cannot be sent twice.
+A per-client lock makes "is the client free?" and the insert one step.
+
+**An audit trail for staff.** Every change made by a barber, an administrator or the owner is
+recorded: who, what action, on which record, with what outcome. Bodies are not stored, because
+they contain clients' data. The owner can read it; it is kept 400 days.
+
+**Logs carry no personal data.** One line per request with the route pattern, never the query
+string or body. Errors return a request id so support can find the matching log line.
+
+**Uploads are judged by content.** The file's first bytes decide whether it is an image and which
+kind; the declared type and name are ignored.
+
+**One origin.** The production image serves the web app from the API, so the refresh cookie is
+same-site without any cross-origin configuration, and a Content Security Policy can be strict:
+own scripts and Stripe's only.
+
+**The first owner is created from the server's command line**, not through the API. An endpoint
+that creates an owner on an empty database is a race anyone on the internet can enter.
+
+**Retention.** Expired sessions and used codes are deleted nightly; the audit trail and message
+history are kept 400 days; abandoned checkouts are closed after a day.
+
+**Not solved here.** A privacy notice and terms of service, data export and erasure on request,
+a second factor for staff sign-in, and alerting. These need a decision by the business first.

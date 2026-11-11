@@ -136,6 +136,17 @@ export interface User {
   createdAt: string;
 }
 
+/** What happened to the money when a paid booking or order was canceled. */
+export type RefundOutcome = 'none' | 'manual' | 'refunding' | 'refunded' | 'failed';
+/** `none`: online payment is switched off on this server; clients pay at the shop. */
+export type PaymentProvider = 'stripe' | 'mock' | 'none';
+
+export interface PaymentConfig {
+  provider: PaymentProvider;
+  publishableKey: string | null;
+  currency: string;
+}
+
 export interface Session {
   accessToken: string;
   user: User;
@@ -220,7 +231,7 @@ export interface Booking {
     markPaid: boolean;
     refund: boolean;
   };
-  refund?: 'none' | 'manual' | 'refunding' | 'refunded';
+  refund?: RefundOutcome;
 }
 
 export interface Product {
@@ -267,13 +278,13 @@ export interface Order {
   client: { id: string; firstName: string; lastName: string | null; phoneNumber: string };
   items: { productId: string; name: string; photoUrl: string | null; quantity: number; priceSnapshot: number; lineTotal: number }[];
   actions: { cancel: boolean; pay: boolean; advanceTo: OrderStatus | null; markPaid: boolean; refund: boolean };
-  refund?: 'none' | 'manual' | 'refunding' | 'refunded';
+  refund?: RefundOutcome;
 }
 
 export interface PaymentStart {
   paymentId: string;
   amount: number;
-  provider: 'stripe' | 'mock';
+  provider: PaymentProvider;
   publishableKey: string | null;
   clientSecret: string | null;
   currency: string;

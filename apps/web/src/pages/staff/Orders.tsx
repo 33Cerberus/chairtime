@@ -14,6 +14,7 @@ const REFUND = {
   manual: 'Order canceled. It was paid in cash — hand the money back and mark it refunded.',
   refunding: 'Order canceled. The card refund is on its way.',
   refunded: 'Order canceled and refunded.',
+  failed: 'Order canceled, but the refund could not be started. Use Refund on the order to try again.',
 };
 
 export default function StaffOrders() {
@@ -141,7 +142,7 @@ export default function StaffOrders() {
                         <Banknote className="size-3.5" /> Mark paid
                       </Button>
                     )}
-                    {o.actions.refund && o.status === 'RECEIVED' && (
+                    {o.actions.refund && (o.status === 'RECEIVED' || o.status === 'CANCELED') && (
                       <Button size="sm" variant="outline" disabled={busy} onClick={() => payment.mutate({ id: o.id, paymentStatus: 'REFUNDED' })}>
                         <RotateCcw className="size-3.5" /> Refund
                       </Button>

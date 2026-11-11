@@ -82,6 +82,7 @@ const REFUND_MESSAGE = {
   manual: 'Canceled. It was paid in cash — hand the money back and mark it refunded.',
   refunding: 'Canceled. The refund is on its way to the card.',
   refunded: 'Canceled. The payment has been refunded.',
+  failed: 'Canceled, but the refund could not be started. Open the booking and refund it again.',
 };
 
 export function CancelBookingDialog({ booking, onClose }: { booking: Booking | null; onClose: () => void }) {

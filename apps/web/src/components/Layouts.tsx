@@ -5,6 +5,7 @@ import {
   CalendarDays,
   ClipboardList,
   ExternalLink,
+  History,
   LayoutGrid,
   LogOut,
   Menu,
@@ -22,6 +23,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { api, Cart } from '../lib/api';
 import { homeFor, useAuth } from '../lib/auth';
 import { fullName } from '../lib/format';
+import { SHOP } from '../lib/shop';
 import { cartUi } from './CartDrawer';
 import { Avatar, ButtonLink, cn, IconButton } from './ui';
 
@@ -34,17 +36,7 @@ export function Logo({ className, light }: { className?: string; light?: boolean
   );
 }
 
-export const SHOP = {
-  address: 'ul. Mokotowska 41',
-  city: '00-551 Warszawa',
-  phone: '+48 22 555 01 41',
-  email: 'hello@chairtime.pl',
-  hours: [
-    ['Mon – Fri', '9:00 – 20:00'],
-    ['Saturday', '10:00 – 16:00'],
-    ['Sunday', 'Closed'],
-  ] as const,
-};
+export { SHOP };
 
 const NAV = [
   { to: '/services', label: 'Services' },
@@ -347,7 +339,15 @@ function staffNav(role: string): { title: string; items: StaffNavItem[] }[] {
       ],
     },
     ...(role === 'OWNER'
-      ? [{ title: 'Owner', items: [{ to: '/staff/analytics', label: 'Analytics', icon: <BarChart3 /> }] }]
+      ? [
+          {
+            title: 'Owner',
+            items: [
+              { to: '/staff/analytics', label: 'Analytics', icon: <BarChart3 /> },
+              { to: '/staff/activity', label: 'Activity', icon: <History /> },
+            ],
+          },
+        ]
       : []),
   ];
 }

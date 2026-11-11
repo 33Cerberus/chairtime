@@ -51,7 +51,9 @@ If a change breaks current clients, `/api/v2` appears, while `v1` continues to w
 - `403` — the role is not allowed
 - `404` — not found
 - `409` — the request is valid, but conflicts with the current state, e.g. the slot is already taken, the phone is already registered, a time rule from `roles.md` is broken
-- `429` — rate limit: 300 requests a minute per address, 10 a minute on sign-in endpoints
+- `429` — rate limit: 300 requests a minute per address, 20 a minute on sign-in endpoints. Also `429 ACCOUNT_LOCKED` when sign-in is paused for a phone number (2.1)
+- `503` — a feature that depends on an outside service is not configured, e.g. no SMS gateway for one-time codes
+- A `500` carries a `requestId`; every response has an `X-Request-Id` header to quote when reporting a problem
 
 ### Pagination
 
@@ -76,14 +78,18 @@ Sessions use a short-lived access JWT (15 minutes) and an opaque refresh token (
 | Method | Path | Access | Notes |
 |---|---|---|---|
 | POST | `/auth/register` | Public | Phone is required and unique, email is optional. Phone already belongs to an account — `409 PHONE_TAKEN`. Phone belongs to an admin-created client record — `409 PHONE_VERIFICATION_REQUIRED` and a 6-digit code is sent to that phone; repeating the request with `code` links the account to the record |
-| POST | `/auth/login` | Public | Phone and password. Returns an access token and the user; sets the refresh cookie |
+| POST | `/auth/login` | Public | Phone and password. Returns an access token and the user; sets the refresh cookie. After 8 wrong passwords in a row for one phone number, sign-in for that number pauses for 15 minutes — `429 ACCOUNT_LOCKED`. The count is kept per number whether or not an account exists, so it reveals nothing |
 | POST | `/auth/refresh` | Public | Reads the refresh cookie (or `refreshToken` in the body). Returns a new access token and rotates the refresh token |
 | POST | `/auth/logout` | Public | Reads the refresh cookie, so it works with an expired access token. `204` |
 | POST | `/auth/set-password` | Public | `token` from a single-use link (see `/users/staff`), `password`. Signs the user in |
 | POST | `/auth/password-reset/request` | Public | `phoneNumber`. Sends a 6-digit code. Always answers the same, whether or not the number exists |
 | POST | `/auth/password-reset` | Public | `phoneNumber`, `code`, `password`. Signs the user in and revokes other sessions |
 
-One-time codes expire after 10 minutes and allow 5 attempts. With `NODE_ENV` other than `production` the code is also returned as `devCode`, because no SMS gateway is connected.
+One-time codes expire after 10 minutes, allow 5 attempts and work once. With `NODE_ENV` set to `development` or `test` the code is also returned as `devCode`. In production it is only ever sent by SMS; when no SMS gateway is configured, the endpoints that need a code answer `503`.
+
+Passwords need at least 8 characters and must not be one of the commonly used ones.
+
+`/auth/refresh` and `/auth/logout` act on the cookie alone, so a browser request to them must come from the web app's own origin (`403` otherwise). Requests without an `Origin` header — mobile apps, scripts — are not affected.
 
 ### 2.2 Users
 
@@ -114,7 +120,7 @@ Deactivation is a separate action, not a field change, because it has side effec
 | GET | `/barbers` | Public | Active barbers only, public fields only, with their active services and prices |
 | GET | `/barbers/:id` | Public | Name, photo, title, description, active services with this barber's prices. No contact details |
 | PATCH | `/barbers/:id` | Barber own, Admin | `title`, `bio`; `photoUrl: null` removes the photo |
-| POST | `/barbers/:id/photo` | Barber own, Admin | Multipart, field `file`. JPEG, PNG, WebP or AVIF, up to 5 MB |
+| POST | `/barbers/:id/photo` | Barber own, Admin | Multipart, field `file`. JPEG, PNG, WebP or AVIF, up to 5 MB. The type is taken from the file's content, not from what the uploader declares |
 | POST | `/barbers/:id/services` | Admin | Assigns a service with a price. Already assigned — `409` |
 | PATCH | `/barbers/:id/services/:serviceId` | Admin | Changes the price. Existing bookings keep their `priceSnapshot` |
 | DELETE | `/barbers/:id/services/:serviceId` | Admin | Physical delete. Existing bookings are not affected |
@@ -219,15 +225,15 @@ Every order has a short random `pickupCode` the client shows at the desk.
 
 ### 2.11 Payments and webhooks
 
-With `STRIPE_SECRET_KEY` set, payments go through Stripe (PaymentIntents) and are confirmed by webhooks. Without it the API runs a mock provider, so the whole flow works locally.
+With `STRIPE_SECRET_KEY` set, payments go through Stripe (PaymentIntents) and are confirmed by webhooks. Without it, in development the API runs a mock provider, so the whole flow works locally. In production without Stripe the provider is `none`: online payment is switched off, the `pay` action is `false` everywhere, and starting a payment answers `409 ONLINE_PAYMENTS_UNAVAILABLE`.
 
 | Method | Path | Access | Notes |
 |---|---|---|---|
-| GET | `/payments/config` | Public | `provider` (`stripe` or `mock`), `publishableKey`, `currency` |
+| GET | `/payments/config` | Public | `provider` (`stripe`, `mock` or `none`), `publishableKey`, `currency` |
 | POST | `/payments/:id/mock-confirm` | Any | Mock provider only: settles an own payment as `succeeded` or `failed`. Disabled when Stripe is configured |
 | POST | `/webhooks/stripe` | Stripe | Verified by the Stripe signature, not by JWT. Updates `Payment` and `paymentStatus`. Each event is applied once. Handles `payment_intent.succeeded`, `.payment_failed`, `.canceled`, `charge.refunded`, `refund.failed` |
 
-A payment that succeeds for a record that was canceled or paid in the meantime is refunded automatically.
+A payment that succeeds for a record that was canceled or paid in the meantime is refunded automatically. Confirming, refunding and canceling are each applied once, even when the same request or webhook arrives twice at the same moment. When the provider refuses a refund, `refund` is `failed` and the record stays `PAID` so it can be retried.
 
 ### 2.12 Reports
 
@@ -241,7 +247,13 @@ All take `from` and `to` (local dates, inclusive; default the last 30 days; max 
 | GET | `/reports/services` | Owner | Most booked services |
 | GET | `/reports/products` | Owner | Best selling products |
 
-### 2.13 Health
+### 2.13 Audit log
+
+| Method | Path | Access | Notes |
+|---|---|---|---|
+| GET | `/audit-log` | Owner | Every state-changing request made by a barber, an administrator or the owner: who, which action (method and route pattern), the record acted on, the outcome, and when. Refused attempts are included. Filter: `actorId`. Paginated. Kept for 400 days. Request bodies are not stored |
+
+### 2.14 Health
 
 | Method | Path | Access | Notes |
 |---|---|---|---|

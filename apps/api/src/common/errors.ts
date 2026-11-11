@@ -31,6 +31,7 @@ const STATUS_TEXT: Record<number, string> = {
   409: 'Conflict',
   413: 'Payload Too Large',
   429: 'Too Many Requests',
+  503: 'Service Unavailable',
   500: 'Internal Server Error',
 };
 
@@ -59,6 +60,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
   catch(exception: unknown, host: ArgumentsHost) {
     const res = host.switchToHttp().getResponse<Response>();
+    const requestId = host.switchToHttp().getRequest<{ id?: string }>().id;
     let status: number = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = 'Something went wrong';
     let code: string | undefined;
@@ -91,7 +93,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
       message = 'Not enough stock';
       code = 'OUT_OF_STOCK';
     } else {
-      this.logger.error(exception instanceof Error ? exception.stack : String(exception));
+      // The details stay in the log; the caller gets a reference to quote to support.
+      this.logger.error(`[${requestId ?? '-'}] ${exception instanceof Error ? exception.stack : String(exception)}`);
     }
 
     res.status(status).json({
@@ -100,6 +103,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       error: STATUS_TEXT[status] ?? 'Error',
       ...(code ? { code } : {}),
       ...(details !== undefined ? { details } : {}),
+      ...(status >= 500 && requestId ? { requestId } : {}),
     });
   }
 }

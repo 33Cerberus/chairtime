@@ -29,6 +29,7 @@ erDiagram
     User ||--o{ RefreshToken : "signed in with"
     User ||--o{ OneTimeToken : "issued"
     User ||--o{ Notification : "receives"
+    User ||--o{ AuditLog : "acts in"
 ```
 
 ## 2. Entities
@@ -239,6 +240,30 @@ Log of messages sent to a user: confirmations, reminders, order updates. One-tim
 
 Stripe events already applied, keyed by the Stripe event id, so a redelivered event is ignored.
 
+### LoginThrottle
+
+Wrong-password attempts for one phone number, kept whether or not an account exists for it.
+
+| Field | Type | Required | Notes |
+|-------|------|:--------:|-------|
+| phoneNumber | string | ✓ | Primary key |
+| failures | integer | ✓ | Consecutive failures inside the 15-minute window |
+| lockedUntil | timestamp | ✗ | Sign-in for this number is refused until then |
+
+### AuditLog
+
+One row per state-changing request made by a member of staff. Request bodies are not stored.
+
+| Field | Type | Required | Notes |
+|-------|------|:--------:|-------|
+| actorId | uuid | ✗ | → User |
+| actorRole | enum | ✗ | Role at the time of the action |
+| method | string | ✓ | HTTP method |
+| route | string | ✓ | Route pattern, e.g. `/api/v1/bookings/:id/cancel` |
+| targetId | string | ✗ | The record acted on, when the route names one |
+| statusCode | integer | ✓ | Outcome; refused attempts are recorded too |
+| ip | string | ✗ | |
+
 ## 3. Lifecycles
 
 ### Booking status
@@ -340,8 +365,9 @@ a cash payment at the shop is recorded by an administrator setting `paymentStatu
 | A barber profile is created only for users with role `BARBER`. It is kept, but no longer listed, if the role later changes — bookings reference it | Code |
 | Intervals of one barber on one day do not overlap; all schedule times lie on a 15-minute step | Code |
 | A schedule change never leaves an upcoming booking outside the barber's hours | Code |
-| A client never holds two overlapping bookings | Code |
+| A client never holds two overlapping bookings | Code (per-client advisory lock around the check and the insert) |
 | An order becomes `RECEIVED` only once it is paid | Code |
 | A booking's service time lies inside the barber's available hours (the buffer may run past them), not in the past, at most 30 days ahead | Code |
-| Status transitions follow the lifecycles above; terminal statuses never change | Code |
+| Status transitions follow the lifecycles above; terminal statuses never change | Code (each transition is a conditional update, so two simultaneous requests cannot both apply) |
+| A payment settles, and a refund starts, at most once | Code (conditional updates) |
 | Order `totalPrice` equals the sum of its items at creation | Code |

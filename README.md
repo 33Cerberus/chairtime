@@ -65,7 +65,7 @@ Every seeded account that can sign in shares one password: `chairtime-demo`
 
 | Role | Phone | Sees |
 |---|---|---|
-| Owner | +48 600 000 001 | Everything, plus staff accounts and analytics |
+| Owner | +48 600 000 001 | Everything, plus staff accounts, analytics and the staff activity log |
 | Administrator | +48 600 000 002 | Calendar, bookings, orders, clients, services, team, products |
 | Barber (Kuba) | +48 600 000 011 | Own day, working hours, time off, public profile |
 | Client (Piotr) | +48 600 000 021 | Own bookings, orders, profile |
@@ -73,16 +73,39 @@ Every seeded account that can sign in shares one password: `chairtime-demo`
 
 In development the sign-in page has one-click buttons for the four roles.
 
-## What works without extra setup
+## Development conveniences
 
-- **Payments** run on a built-in mock provider: checkout shows a test card and settles
-  instantly. Set `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY` and `STRIPE_WEBHOOK_SECRET` to use
-  Stripe (test mode) instead; point the webhook at `/api/v1/webhooks/stripe`.
-- **Photos** are stored under `apps/api/uploads`. Set `S3_BUCKET` (and credentials) to use S3 or
-  any S3-compatible store.
-- **Text messages** — reminders, confirmations and one-time codes — are written to the API log
-  and to each client's message history. One-time codes are also shown on screen in development.
-  Connect a gateway in `apps/api/src/notifications/notifications.service.ts`.
+With `NODE_ENV=development` (as in `.env.example`) everything works without outside services:
+
+- **Payments** run on a built-in test checkout that settles instantly.
+- **Text messages** — reminders, confirmations, one-time codes — are printed to the API log, and
+  codes are also shown on screen.
+- **Photos** are stored under `apps/api/uploads`.
+
+None of this is available in production: there, payments need Stripe, text messages need an SMS
+gateway, and what is not configured is switched off rather than simulated. `NODE_ENV` unset
+counts as production.
+
+## Running it for a real shop
+
+See **[docs/operations.md](docs/operations.md)** — deployment with Docker, the first owner
+account, configuration, backups, monitoring, the security model and known limits.
+
+In short:
+
+```bash
+cp .env.production.example .env.production
+```
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+```
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production exec app node dist/cli/create-owner.js "First" "Last" "+48 600 000 001"
+```
+
+The shop's address, phone number and opening hours are in `apps/web/src/lib/shop.ts`.
 
 ## Checks
 
@@ -96,9 +119,10 @@ Unit tests of the scheduling maths (slots, exceptions, buffers).
 npm run smoke -w apps/api
 ```
 
-End-to-end test against the running API with seeded data: 73 checks across booking rules,
-permissions, payments and refunds, stock, account linking, staff accounts, reports and sessions.
-It creates and cancels records, so re-seed afterwards.
+End-to-end test against the running API with seeded data: booking rules, permissions, payments
+and refunds, stock, account linking, staff accounts, reports, sessions, sign-in lockout, upload
+checks, simultaneous requests and the audit trail. It creates and cancels records, so re-seed
+afterwards. Wait a minute between runs: it signs in often enough to meet the rate limit twice.
 
 ```bash
 npm run typecheck
@@ -122,6 +146,9 @@ apps/api
   src/catalog                 services, barbers, products
   src/users, src/auth         accounts, roles, sessions
   src/reports                 owner analytics
+  src/audit                   staff activity trail
+  src/cli                     create-owner, password-link
+  src/common/runtime.ts       configuration and start-up checks
 apps/web
   src/pages                   public site, booking, shop, account
   src/pages/staff             barber, front desk and owner screens
@@ -130,14 +157,12 @@ docs
   domain.md, roles.md         the business and its rules
   data-model.md, api.md       entities and endpoints
   decisions.md                how the open questions were settled
+  operations.md               deploying and running it for a real shop
   scope.md                    milestones and their state
 ```
 
-## Production notes
+## Not included yet
 
-- Set `NODE_ENV=production` and a random `JWT_ACCESS_SECRET` of at least 32 characters; the API
-  refuses to start otherwise.
-- Serve the web build and the API from one origin (reverse proxy `/api` and `/uploads` to the
-  API), so the refresh cookie stays same-site. Set `WEB_ORIGIN` and `TRUST_PROXY=1`.
-- Run `npm run db:migrate` on deploy. Never run the seed against real data.
-- Not included yet: the mobile client, a real SMS or e-mail gateway, deployment.
+A mobile app; a privacy notice and terms of service; data export and erasure on request. The
+Stripe and SMS integrations are written but have not been run against the real services, and
+the production stack has not been deployed to a server — see `docs/operations.md` §10.
